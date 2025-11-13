@@ -2,6 +2,7 @@
 using BankSystem.API.dto;
 using BankSystem.API.model;
 using BankSystem.APII.repository;
+using BankSystem.APII.Service;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -14,11 +15,11 @@ namespace BankSystem.API
     
     public class ContasControllers : ControllerBase
     {
-        private readonly IContaRepository _repositorio;
-        public ContasControllers(IContaRepository contaRepository)
+        private readonly IContaService _service;
+
+        public ContasControllers(IContaService contaService)
         {
-            
-            _repositorio = contaRepository;
+            _service = contaService;
         }
 
         [HttpGet]
@@ -26,136 +27,94 @@ namespace BankSystem.API
              [FromQuery] int page = 1, [FromQuery] int size = 10,
              [FromQuery] string orderBy = "numero", [FromQuery] string? titular = null)
         {
-         
-            var contas = await _repositorio.GetAllAsync(page, size, orderBy, titular);
-
-           
-            var viewModels = contas.Select(static c => new ContasViewModel
-            {
-                Id = c.Id,
-                NumeroConta = c.NumeroConta,
-                Saldo = c.Saldo,
-                Titular = c.Titular
-            });
-
+            
+            var viewModels = await _service.GetAllAsync(page, size, orderBy, titular);
             return Ok(viewModels);
         }
 
         [HttpGet("{numero}")]
         public async Task<ActionResult<ContasViewModel>> Get(int numero)
         {
-            
-            var conta = await _repositorio.GetByNumeroAsync(numero);
-
-            if (conta == null)
+            try
             {
-                return NotFound(new { message = "Número da conta não encontrado." });
+              
+                var contaview = await _service.GetByNumeroAsync(numero);
+                return Ok(contaview);
             }
-
-            var contaview = new ContasViewModel
+            catch (KeyNotFoundException ex)
             {
-                Id = conta.Id,
-                NumeroConta = conta.NumeroConta,
-                Saldo = conta.Saldo,
-                Titular = conta.Titular 
-            };
-
-            return Ok(contaview);
+               
+                return NotFound(new { message = ex.Message });
+            }
         }
 
         [HttpPost]
-        public async Task<ActionResult<ContasViewModel>> CriarConta( [FromBody] ContaInputModel novaConta)
+        public async Task<ActionResult<ContasViewModel>> CriarConta([FromBody] ContaInputModel novaConta)
         {
             if (!ModelState.IsValid)
                 return ValidationProblem(ModelState);
 
-            
-            if (novaConta.Saldo < 0)
-                return BadRequest(new { message = "Saldo inicial não pode ser negativo." });
-            if (novaConta.Numero <= 0)
-                return BadRequest(new { message = "Número da conta deve ser maior que zero." });
-
-            var jaExiste = await _repositorio.GetByNumeroAsync(novaConta.Numero);
-            if (jaExiste != null)
+            try
             {
-                return BadRequest(new { message = "Este número de conta já está em uso." });
+                
+                var contaview = await _service.CriarContaAsync(novaConta);
+                return CreatedAtAction(nameof(Get), new { numero = contaview.NumeroConta }, contaview);
             }
-            
-            var conta = new Conta
+            catch (InvalidOperationException ex)
             {
-                NumeroConta = novaConta.Numero,
-                Saldo = novaConta.Saldo,
-                Titular = novaConta.Titular, 
-                DataCriacao = DateTime.UtcNow,
-                Status = Status.Ativa,
-                Tipo = Tipo.Corrente
-            };
-
-           
-            await _repositorio.AddAsync(conta);
-            await _repositorio.SaveChangesAsync();
-
-            
-            var contaview = new ContasViewModel
-            {
-                Id = conta.Id,
-                NumeroConta = conta.NumeroConta,
-                Saldo = conta.Saldo,
-                Titular = conta.Titular,
-            };
-
-            return CreatedAtAction(nameof(Get), new { numero = contaview.NumeroConta }, contaview);
+                
+                return BadRequest(new { message = ex.Message });
+            }
         }
 
         [HttpPatch("{numero}/depositar")]
         public async Task<ActionResult> Depositar(int numero, [FromQuery] decimal saldoDeposito)
         {
-            if (saldoDeposito <= 0)
-                return BadRequest(new { message = "Valor do depósito deve ser maior que zero." });
-
-            var conta = await _repositorio.GetByNumeroAsync(numero);
-            if (conta == null)
-                return NotFound(new { message = $"Conta {numero} não encontrada." });
-
-            conta.Saldo += saldoDeposito;
-
-           
-            await _repositorio.SaveChangesAsync();
-
-            return Ok(new { message = "Depósito realizado com sucesso" });
+            try
+            {
+                await _service.DepositarAsync(numero, saldoDeposito);
+                return Ok(new { message = "Depósito realizado com sucesso" });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { message = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
         }
 
         [HttpPatch("{numero}/sacar")]
         public async Task<ActionResult> Saque(int numero, [FromQuery] decimal saldoSaque)
         {
-            if (saldoSaque <= 0)
-                return BadRequest(new { message = "Valor do saque deve ser maior que zero." });
-
-            var conta = await _repositorio.GetByNumeroAsync(numero);
-            if (conta == null)
-                return NotFound(new { message = $"Conta {numero} não encontrada." });
-
-            if (conta.Saldo < saldoSaque)
-                return BadRequest(new { message = "Saldo insuficiente." });
-
-            conta.Saldo -= saldoSaque;
-
-            await _repositorio.SaveChangesAsync();
-
-            return Ok(new { message = "Saque realizado com sucesso" });
+            try
+            {
+                await _service.SacarAsync(numero, saldoSaque);
+                return Ok(new { message = "Saque realizado com sucesso" });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { message = ex.Message });
+            }
+            catch (InvalidOperationException ex) 
+            {
+                return BadRequest(new { message = ex.Message });
+            }
         }
 
         [HttpDelete("{numero}")]
         public async Task<ActionResult> DeleteAccount(int numero)
         {
-            var conta = await _repositorio.GetByNumeroAsync(numero);
-            if (conta == null)
-                return NotFound(new { message = "Número da conta não encontrado" });
-
-            _repositorio.Delete(conta);
-            await _repositorio.SaveChangesAsync();
-
-            return NoContent(); 
+            try
+            {
+                await _service.DeleteAccountAsync(numero);
+                return NoContent(); 
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { message = ex.Message });
+            }
         }
     }
 }

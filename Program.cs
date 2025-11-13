@@ -1,5 +1,6 @@
 ﻿using BankSystem.API.data;
 using BankSystem.APII.repository;
+using BankSystem.APII.Service;
 using Microsoft.EntityFrameworkCore;
 
 
@@ -11,6 +12,8 @@ public class Program
 
 
         builder.Services.AddScoped<IContaRepository, ContaRepository>();
+
+        builder.Services.AddScoped<IContaService, ContaService>();
 
 
         builder.Services.AddControllers();
